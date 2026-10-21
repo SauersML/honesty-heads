@@ -4,8 +4,9 @@ anything else. With drop = m unsteered minus m steered (m = log2 p(lie) - log2 p
 flipped so positive = toward the lie), a pure push toward "Yes" lowers m where the lie is a no-word and raises it where
 the lie is a yes-word; an answer-blind honesty push lowers both. Per steer, against its random directions:
   honesty = (mean drop on no-lies + mean drop on yes-lies) / 2,  yes push = (mean drop on no-lies - on yes-lies) / 2,
-  and the mean drop on lies whose answers are neither. Item order is persona_rep.py run's (nat_recs: seeded, usable);
-  a family whose item count differs from the file's is skipped.
+  and the mean drop on lies whose answers are neither. Each family's polarities come from lies.json ("said", written by
+  persona_rep.py run); for older files without it, the role-play order is rebuilt as persona_rep.py run's (nat_recs:
+  seeded, usable) and a family whose item count differs from the file's is skipped.
   python code/answer_split.py ITEMS.json OUT.json LIES.json [LIES.json ...]"""
 import json
 import sys
@@ -41,18 +42,19 @@ def main():
     out = {}
     for path in sys.argv[3:]:
         L = json.load(open(path))
-        for fam, lab, sign in (("rp", "lie", 1.0), ("rp", "resist", -1.0)):
-            key = f"{fam} {lab}"
-            if key not in L["families"]:
-                continue
-            cand = C.seeded([it for it in items if it["family"] == fam and it["split"] == "test" and
-                             it.get("label") == lab and it.get("usable")], f"{fam}/test/{lab}")
-            f = L["families"][key]
+        for key, f in L["families"].items():
+            fam, lab = key.rsplit(" ", 1)
+            sign = 1.0 if lab == "lie" else -1.0
             m0, S = np.array(f["m"]), np.array(f["steered"])
-            if len(cand) != len(m0):
-                print(f"{path} {key}: {len(cand)} items vs {len(m0)} scored, skipped")
-                continue
-            pol = np.array([polarity(it["lie"] if lab == "lie" else it["truth"]) for it in cand])
+            if "said" in f:
+                pol = np.array(f["said"])
+            else:
+                cand = C.seeded([it for it in items if it["family"] == fam and it["split"] == "test" and
+                                 it.get("label") == lab and it.get("usable")], f"{fam}/test/{lab}")
+                if len(cand) != len(m0):
+                    print(f"{path} {key}: {len(cand)} items vs {len(m0)} scored, skipped")
+                    continue
+                pol = np.array([polarity(it["lie"] if lab == "lie" else it["truth"]) for it in cand])
             o = split(m0, S, pol, sign)
             names = L["names"][1:]
             for arm in L["arms"]:
