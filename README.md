@@ -17,7 +17,7 @@ how the model describes itself on Anthropic's persona questions.
 - **Test sets.** 34 lies from role-play scenarios not used in the head search, scored at the answer token: with the
   29 heads steered, the truthful answer becomes more likely than the lie on 18 (0.53, exact 95% interval 0.35-0.70)
   and is the single most likely token on 12 (0.35). All 896 heads: 20 of 34 (0.59). Random sets of 29 heads: at most
-  1 of 34. All heads but the 29: 5 of 34 (0.15), measured in bfloat16, the rest in float32. Insider trading (45
+  1 of 34. All heads but the 29: 6 of 34 (0.18). Insider trading (45
   conversations in which the unsteered model lies to its manager, 512-token replies, graded by rule): steered, 19
   replies admit the insider tip or name it (7 full admissions), against 8 and 5 along two random directions (exact
   paired tests, p = 0.013 and 0.001). Full admissions alone, 7 against 4 and 1, are not significant (p = 0.45, 0.07).
