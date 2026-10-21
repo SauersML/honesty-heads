@@ -58,3 +58,28 @@ python code/persona_stats.py $OUT/persona/persona.json $OUT/persona/persona_stat
 
 # 9. The figure (from results/; point it at $OUT by copying the step outputs there).
 python code/figure.py results/persona_stats.json honesty_heads.png
+
+# 10. Other ways of steering toward honesty, each against its own random directions (persona_rep.py), and how their
+#     persona changes compare with the 29 heads' (persona_compare.py). Neuron and residual strengths are calibrated on
+#     the select lies to the every-head effect. (The arms in data/arms_*.json read the outputs under out/.)
+R=$OUT/replication
+python code/persona_rep.py resdir --items $I --source rp --out $R/residual
+python code/persona_rep.py calib --items $I --arms data/arms_residual.json --ref-delta $OUT/natural/delta_A_rp.pt \
+  --source rp --out $R/residual
+python code/persona_rep.py run --items $I --persona data/items_persona.json --arms data/arms_residual.json \
+  --calib $R/residual/calib.json --families rp --controls $CTL --out $R/residual
+python code/persona_rep.py calib --items $I --arms data/arms_neurons.json --ref-delta $OUT/natural/delta_A_rp.pt \
+  --source rp --out $R/neurons
+SA=$(python -c "import json; print(json.load(open('$R/neurons/calib.json'))['arms']['every neuron']['alpha'])")
+python code/steer.py natsel --kind n --items $I --delta $OUT/natural/delta_A_rp.pt --source rp --families rp \
+  --out $R/neurons/natsel --span 9 --select-alpha $SA --ig-items 40 --ig-steps 6 --curve-items 40 --per-doubling 4 \
+  --random 8 --n-items 40 --controls $CTL
+python code/persona_rep.py run --items $I --persona data/items_persona.json --arms data/arms_neurons.json \
+  --calib $R/neurons/calib.json --families rp --controls $CTL --out $R/neurons
+python code/steer.py natsel --items $I --delta $OUT/natural/delta_A_rp.pt --source rp --families rp \
+  --out $R/heads/natsel --span 9 --select-alpha 2 --ig-items 40 --ig-steps 0 --curve-items 40 --per-doubling 4 \
+  --random 8 --n-items 40 --controls $CTL
+python code/persona_rep.py run --items $I --persona data/items_persona.json --arms data/arms_heads.json \
+  --families rp --controls $CTL --out $R/heads
+python code/persona_compare.py $OUT/persona/persona.json $R/compare.json $R/residual $R/heads $R/neurons
+python code/replication_figure.py results/replication/compare.json results/persona.json replication.png

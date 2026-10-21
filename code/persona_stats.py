@@ -20,7 +20,8 @@ or between traits (p = (1 + #{random directions at least as extreme}) / (K + 1))
     direction's median over traits (the shift every trait shares); a trait counts where both residuals have the same
     sign and each is at most one other direction as extreme (p <= 2 / (K + 1)). A plain shift leaves no trait. The count
     of such traits is tested against the same count for each random direction (against the other K - 1 and the delta).
-  persona_stats.py persona.json OUT.json"""
+  persona_stats.py persona.json OUT.json [ARM]: ARM one steering arm of persona_rep.py's persona file (column ARM,
+  tested against its own random directions ARM/random1..K); without ARM, natpersona's "set" against "random*"."""
 import json
 import sys
 
@@ -93,7 +94,8 @@ def perm_fdr(A: np.ndarray) -> np.ndarray:
 def main():
     rec = json.load(open(sys.argv[1]))
     names = rec["names"]
-    ri = [j for j, n in enumerate(names) if n.startswith("random")]
+    arm = sys.argv[3] if len(sys.argv) > 3 else "set"
+    ri = [j for j, n in enumerate(names) if n.startswith("random" if arm == "set" else arm + "/random")]
     K = len(ri)
     traits = sorted({it["trait"] for it in rec["items"]})
     m = {t: {"Yes": [], "No": []} for t in traits}
@@ -106,13 +108,14 @@ def main():
         T[t] = (dy.mean(0) + dn.mean(0)) / 2           # per direction (column)
         B[t] = (dy.mean(0) - dn.mean(0)) / 2
         allm = np.concatenate([y, n])
-        rate0[t], rate1[t] = float((allm[:, 0] > 0).mean()), float((allm[:, names.index("set")] > 0).mean())
-        pe0[t], pe1[t] = (float((1 / (1 + 2.0 ** -allm[:, j])).mean()) for j in (0, names.index("set")))
+        rate0[t], rate1[t] = float((allm[:, 0] > 0).mean()), float((allm[:, names.index(arm)] > 0).mean())
+        pe0[t], pe1[t] = (float((1 / (1 + 2.0 ** -allm[:, j])).mean()) for j in (0, names.index(arm)))
     Ty = {t: (np.array(m[t]["Yes"]) - np.array(m[t]["Yes"])[:, :1]).mean(0) for t in traits}
     Tn = {t: (np.array(m[t]["No"]) - np.array(m[t]["No"])[:, :1]).mean(0) for t in traits}
     Tm = np.array([T[t] for t in traits])              # [traits, directions]
     Bm = np.array([B[t] for t in traits])
-    s, e = names.index("set"), names.index("every_head")
+    s = names.index(arm)
+    e = names.index("every_head") if "every_head" in names else s
     cols = [s] + ri
     A = np.abs(Tm[:, cols])                            # set first, then the random directions
     out = {"K": K, "n_traits": len(traits), "items_per_trait": {t: len(m[t]["Yes"]) + len(m[t]["No"]) for t in traits}}

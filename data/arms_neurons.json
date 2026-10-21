@@ -1,0 +1,19 @@
+[
+ {
+  "name": "every neuron",
+  "delta": "out/natural/delta_A_rp.pt",
+  "kind": "n",
+  "units": "all",
+  "alpha": "calib",
+  "random": 19
+ },
+ {
+  "name": "neuron set",
+  "delta": "out/natural/delta_A_rp.pt",
+  "kind": "n",
+  "units": "out/replication/neurons/natsel/neurons_nat.json",
+  "alpha": "calib",
+  "calib_from": "every neuron",
+  "random": 19
+ }
+]

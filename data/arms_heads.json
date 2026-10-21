@@ -1,0 +1,27 @@
+[
+ {
+  "name": "attribution patching head set",
+  "delta": "out/natural/delta_A_rp.pt",
+  "kind": "h",
+  "units": "out/replication/heads/natsel/heads_nat.json",
+  "alpha": 2.0,
+  "random": 19
+ },
+ {
+  "name": "every head",
+  "delta": "out/natural/delta_A_rp.pt",
+  "kind": "h",
+  "units": "all",
+  "alpha": 2.0,
+  "random": 19
+ },
+ {
+  "name": "every head but the 29",
+  "delta": "out/natural/delta_A_rp.pt",
+  "kind": "h",
+  "units": "all",
+  "exclude": "out/natsel_rp/heads_nat.json",
+  "alpha": 2.0,
+  "random": 0
+ }
+]

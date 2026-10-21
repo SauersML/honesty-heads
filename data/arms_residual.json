@@ -1,0 +1,26 @@
+[
+ {
+  "name": "residual stream layer 8",
+  "delta": "out/replication/residual/resid_rp.pt",
+  "kind": "r",
+  "layer": 8,
+  "alpha": "calib",
+  "random": 19
+ },
+ {
+  "name": "residual stream layer 16",
+  "delta": "out/replication/residual/resid_rp.pt",
+  "kind": "r",
+  "layer": 16,
+  "alpha": "calib",
+  "random": 19
+ },
+ {
+  "name": "residual stream layer 24",
+  "delta": "out/replication/residual/resid_rp.pt",
+  "kind": "r",
+  "layer": 24,
+  "alpha": "calib",
+  "random": 19
+ }
+]

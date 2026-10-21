@@ -122,29 +122,41 @@ def masks(eng, units) -> dict:
 
 class Shift:
     """edit(kind, l, x [B, T, W]): row b adds coef[b] x delta on its set's units at the positions of where (dl: one
-    delta for every row, or a list with each row's own)."""
+    delta for every row, or a list with each row's own). bound(l, h [B, T, d]): row b adds coef[b] x its delta's
+    residual vector at layer l's input ("r": {layer: [d]}), at the same positions."""
 
     def __init__(self, eng, dl, rows: list, P: int, every: bool):
         self.eng, self.P, self.every = eng, P, every
         self.dl = dl if isinstance(dl, list) else [dl] * len(rows)
         self.coef = torch.tensor([c for c, _ in rows], dtype=torch.float32)
         self.ms = [m for _, m in rows]
+        self.res = any(d.get("r") for d in self.dl)
 
     def sub(self, a: int, b: int) -> "Shift":
         return Shift(self.eng, self.dl[a:b], list(zip(self.coef[a:b].tolist(), self.ms[a:b])), self.P, self.every)
+
+    def _add(self, x, add):
+        if self.every:
+            return x + add[:, None].to(x.dtype)
+        x = x.clone()
+        x[:, x.shape[1] - self.P:] += add[:, None].to(x.dtype)
+        return x
 
     def __call__(self, kind, l, x):
         B, T, W = x.shape
         m = torch.stack([mk.get((kind, l), torch.zeros(W, dtype=torch.bool)) for mk in self.ms]).to(x.device)
         if not bool(m.any()):
             return x
-        d = torch.stack([dl[kind][l].to(x.device) for dl in self.dl])
-        add = (self.coef.to(x.device)[:, None] * m) * d
-        if self.every:
-            return x + add[:, None].to(x.dtype)
-        x = x.clone()
-        x[:, T - self.P:] += add[:, None].to(x.dtype)
-        return x
+        d = torch.stack([dl[kind][l].to(x.device) if kind in dl else torch.zeros(W, device=x.device)
+                         for dl in self.dl])
+        return self._add(x, (self.coef.to(x.device)[:, None] * m) * d)
+
+    def bound(self, l, h):
+        vs = [dl.get("r", {}).get(l) for dl in self.dl]
+        if all(v is None for v in vs):
+            return h
+        d = torch.stack([v.to(h.device) if v is not None else torch.zeros(h.shape[-1], device=h.device) for v in vs])
+        return self._add(h, self.coef.to(h.device)[:, None] * d)
 
 
 ROW_TOKENS = int(os.environ.get("DCORE_ROW_TOKENS", 4096))     # rows x tokens of one forward
@@ -160,7 +172,7 @@ def run_rows(eng, ids: list, sh: Shift) -> torch.Tensor:
         b = len(part.ms)
         x = torch.as_tensor(ids, device=eng.dev)[None].expand(b, -1)
         pos = torch.arange(len(ids), device=eng.dev)[None].expand(b, -1)
-        hn, _ = eng._forward(x, pos, eng._empty(b), part, False)
+        hn, _ = eng._forward(x, pos, eng._empty(b), part, False, boundary=part.bound if part.res else None)
         out.append(eng.logp(hn))
     return torch.cat(out)
 
@@ -297,22 +309,24 @@ def run(a):
 
 
 # ---------------------------------------------------------------- a head set for the every-position shift
-def ig_heads(eng, run: E.Run, dl: dict, sign: float, steps: int) -> torch.Tensor:
-    """[L, H] integrated gradients of m along the every-head shift c x sign x delta (every position), c 0 -> 1 at
-    steps midpoints: each head's share of m(c=1) - m(c=0), H the widest layer's head count (others zero-padded)."""
-    H = max(eng.nheads)
-    out = torch.zeros(eng.L, H)
-    for k in range(steps):
-        c = (k + 0.5) / steps
+def ig_units(eng, run: E.Run, dl: dict, sign: float, steps: int, kind: str = "h") -> torch.Tensor:
+    """[L, W] integrated gradients of m along the every-unit shift c x sign x delta (every position) on kind's units,
+    c 0 -> 1 at steps midpoints: each unit's share of m(c=1) - m(c=0). Heads: W the widest layer's head count (others
+    zero-padded); neurons: W the MLP width. steps 0: attribution patching, the first-order change (the gradient at
+    c = 0)."""
+    out = torch.zeros(eng.L, max(eng.nheads) if kind == "h" else eng.D)
+    cs_ = [(k + 0.5) / steps for k in range(steps)] if steps else [0.0]
+    for c in cs_:
         cs = {}
 
-        def edit(kind, l, x, c=c):
-            if kind != "h":
+        def edit(k_, l, x, c=c):
+            if k_ != kind:
                 return x
-            nh, hd = eng.nheads[l], eng.hdim[l]
-            z = torch.full((nh,), c * sign, device=x.device, dtype=x.dtype, requires_grad=True)
+            z = torch.full((eng.nheads[l] if kind == "h" else eng.D,), c * sign, device=x.device, dtype=x.dtype,
+                           requires_grad=True)
             cs[l] = z
-            return x + (z.repeat_interleave(hd) * dl["h"][l].to(x.device, x.dtype))[None, None]
+            g = z.repeat_interleave(eng.hdim[l]) if kind == "h" else z
+            return x + (g * dl[kind][l].to(x.device, x.dtype))[None, None]
         with torch.enable_grad():
             ids = torch.as_tensor(run.ids, device=eng.dev)[None]
             pos = torch.arange(len(run.ids), device=eng.dev)[None]
@@ -321,7 +335,7 @@ def ig_heads(eng, run: E.Run, dl: dict, sign: float, steps: int) -> torch.Tensor
             m = (torch.logsumexp(lp[run.lie], 0) - torch.logsumexp(lp[run.truth], 0)) / LN2
             m.backward()
         for l, z in cs.items():
-            out[l, :eng.nheads[l]] += z.grad.float().cpu() * sign / steps
+            out[l, :z.numel()] += z.grad.float().cpu() * sign / len(cs_)
         del lp, m, hn
     return out
 
@@ -377,8 +391,8 @@ def select(a):
         recs = data.by[(f, "select")][:a.ig_items]
         for grp in data.pairs(recs, P):
             for pr in grp:
-                gN = -ig_heads(eng, pr.dec, dls, 1.0, a.ig_steps) / pr.gap
-                gR = ig_heads(eng, pr.hon, dls, -1.0, a.ig_steps) / pr.gap
+                gN = -ig_units(eng, pr.dec, dls, 1.0, a.ig_steps) / pr.gap
+                gR = ig_units(eng, pr.hon, dls, -1.0, a.ig_steps) / pr.gap
                 acc += (gN + gR) / 2
                 comp.append(float(gN.sum()))
         sc[f] = acc / max(1, len(comp))
@@ -750,7 +764,8 @@ def natsel(a):
     (-alpha x delta), each item's head shares normalized by its whole m change; per set size the median share of every
     head's m change, on lies and on resists; the first size where both lie in [PASS, NAT_HI]; then the set against
     every head and random same-layer head sets on the source's test items, the other natural families, the instructed
-    families and controls -> DIR/heads_nat.json."""
+    families and controls -> DIR/heads_nat.json. --kind n: MLP neurons instead of heads (random same-layer neuron sets)
+    -> DIR/neurons_nat.json; --ig-steps 0: ordered by attribution patching (the first-order change) instead."""
     torch.manual_seed(0)
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -763,39 +778,48 @@ def natsel(a):
     dz = torch.load(os.path.expanduser(a.delta), weights_only=False)
     dl = {k: dz[k] for k in ("h", "n")}
     dls = {k: [x * sa for x in v] for k, v in dl.items()}
-    heads = [(l, i) for l in range(eng.L) for i in range(eng.nheads[l])]
-    every = masks(eng, [("h", l, i) for l, i in heads])
-    rec = {"P": P, "source": src, "delta": a.delta, "select_alpha": sa, "pass": C.PASS, "n_heads": len(heads)}
+    kind = a.kind
+    word, ev, fname = ("heads", "every_head", "heads_nat.json") if kind == "h" else \
+        ("neurons", "every_neuron", "neurons_nat.json")
+    width = [eng.nheads[l] if kind == "h" else eng.D for l in range(eng.L)]
+    heads = [(l, i) for l in range(eng.L) for i in range(width[l])]
+    every = masks(eng, [(kind, l, i) for l, i in heads])
+    rec = {"P": P, "source": src, "delta": a.delta, "select_alpha": sa, "pass": C.PASS, "kind": kind,
+           "rank": "integrated gradients" if a.ig_steps else "attribution patching", "n_units": len(heads)}
 
     def dump():
-        json.dump(rec, open(out / "heads_nat.json.tmp", "w"), indent=1)
-        os.replace(out / "heads_nat.json.tmp", out / "heads_nat.json")
+        json.dump(rec, open(out / f"{fname}.tmp", "w"), indent=1)
+        os.replace(out / f"{fname}.tmp", out / fname)
     # 1. integrated gradients over the source's select lies (+) and resists (-), per item normalized by its m change
     sel = {lab: [r for f in src for r in nat_recs(eng, tok, items, f, ["select"], lab, a.ig_items, P)]
            for lab in ("lie", "resist")}
     sc = {}
     for lab, sign in (("lie", 1.0), ("resist", -1.0)):
-        acc, n, tot = torch.zeros(eng.L, max(eng.nheads)), 0, []
+        acc, n, tot = torch.zeros(eng.L, max(width)), 0, []
         for r in sel[lab]:
             run = types.SimpleNamespace(ids=r["ids"], lie=r["lie"], truth=r["truth"])
-            g = ig_heads(eng, run, dls, sign, a.ig_steps)
+            g = ig_units(eng, run, dls, sign, a.ig_steps, kind)
             s = float(g.sum())
             tot.append(s)
             if abs(s) >= a.min_change:
                 acc += g / s
                 n += 1
         sc[lab] = acc / max(n, 1)
-        E.log(f"ig {lab}: {n} of {len(tot)} items with an every-head m change of at least {a.min_change} bits "
+        E.log(f"ig {lab}: {n} of {len(tot)} items with an every-{word[:-1]} m change of at least {a.min_change} bits "
               f"(median change {np.median(tot) if tot else float('nan'):+.2f}) ({time.time() - t0:.0f} s)")
     S = torch.stack([sc["lie"], sc["resist"]])
-    orders = {rule: sorted(heads, key=lambda h, v=v: -float(v[h])) for rule, v in
+    li, ii = torch.tensor([l for l, _ in heads]), torch.tensor([i for _, i in heads])
+    orders = {rule: [heads[j] for j in torch.argsort(-v[li, ii], stable=True).tolist()] for rule, v in
               (("min", S.min(0).values), ("mean", S.mean(0)))}
-    rec["ig"] = {k: v.tolist() for k, v in sc.items()}
+    if kind == "h":
+        rec["ig"] = {k: v.tolist() for k, v in sc.items()}
+    else:
+        torch.save(sc, out / "neurons_ig.pt")
     # 2. curves: per size, the median share of every head's m change, on lies and on resists
     sizes = E.grid(len(heads), a.per_doubling)
     rec["curves"], best = {}, None
     for rule, order in orders.items():
-        mks = [masks(eng, [("h", l, i) for l, i in order[:k]]) for k in sizes] + [every]
+        mks = [masks(eng, [(kind, l, i) for l, i in order[:k]]) for k in sizes] + [every]
         rel = {lab: np.array([nat_rel(eng, r, dl, mks, sa, P, sign)[:-1] for r in sel[lab][:a.curve_items]])
                for lab, sign in (("lie", 1.0), ("resist", -1.0))}
         med = {lab: np.nanmedian(v, 0) if len(v) else np.full(len(sizes), np.nan) for lab, v in rel.items()}
@@ -805,8 +829,8 @@ def natsel(a):
         rec["curves"][rule] = {"sizes": sizes, "first_passing": first, "lie": med["lie"].round(4).tolist(),
                                "resist": med["resist"].round(4).tolist()}
         E.log(f"curve {rule}: first passing {first}; " + "; ".join(
-            f"{k} heads lie {med['lie'][j]:.2f} resist {med['resist'][j]:.2f}" for j, k in enumerate(sizes)
-            if k in (4, 8, 16, 32, 64, 128, 256, 512)))
+            f"{k} {word} lie {med['lie'][j]:.2f} resist {med['resist'][j]:.2f}" for j, k in enumerate(sizes)
+            if k in (4, 8, 16, 32, 64, 128, 256, 512) or k in sizes[-12::3]))
         key = (first is None, first or 0, -float(np.nanmax(ms)))
         if best is None or key < best[0]:
             best = (key, rule, first or sizes[int(np.nanargmax(ms))])
@@ -814,20 +838,29 @@ def natsel(a):
     _, rule, k = best
     core = orders[rule][:k]
     rec.update({"rule": rule, "size": k, "met": best[0][0] is False,
-                "heads": [{"layer": l, "index": i, "label": f"L{l}.H{i}"} for l, i in core],
+                word: [{"layer": l, "index": i, "label": f"L{l}.{'H' if kind == 'h' else 'N'}{i}"} for l, i in core],
                 "layers": {int(l): sum(1 for x, _ in core if x == l) for l in sorted({l for l, _ in core})}})
-    E.log(f"head set ({rule}): {k} heads (met {rec['met']}) layers {rec['layers']} ({time.time() - t0:.0f} s)")
+    E.log(f"{word[:-1]} set ({rule}): {k} {word} (met {rec['met']}) layers {rec['layers']} ({time.time() - t0:.0f} s)")
     dump()
-    # 3. the set, every head and random same-layer head sets on test items, other families, transfer and controls
+    # 3. the set, every unit and random same-layer unit sets on test items, other families, transfer and controls
     rng = np.random.default_rng(0)
-    variants = [("set", dl, ["every"], [sa], masks(eng, [("h", l, i) for l, i in core])),
-                ("every_head", dl, ["every"], [sa], every)]
-    for q in range(a.random):
-        rs = []
-        for l, _i in core:
-            free = [i for i in range(eng.nheads[l]) if (l, i) not in set(core) | set(rs)]
-            rs.append((l, int(rng.choice(free))) if free else (l, _i))
-        variants.append((f"random{q}", dl, ["every"], [sa], masks(eng, [("h", l, i) for l, i in rs])))
+    variants = [("set", dl, ["every"], [sa], masks(eng, [(kind, l, i) for l, i in core])),
+                (ev, dl, ["every"], [sa], every)]
+    if kind == "h":
+        for q in range(a.random):
+            rs = []
+            for l, _i in core:
+                free = [i for i in range(eng.nheads[l]) if (l, i) not in set(core) | set(rs)]
+                rs.append((l, int(rng.choice(free))) if free else (l, _i))
+            variants.append((f"random{q}", dl, ["every"], [sa], masks(eng, [("h", l, i) for l, i in rs])))
+    else:
+        per_layer = {l: [i for x, i in core if x == l] for l in sorted({l for l, _ in core})}
+        for q in range(a.random):
+            rs = []
+            for l, own in per_layer.items():
+                free = np.setdiff1d(np.arange(width[l]), own)
+                rs += [(l, int(i)) for i in rng.choice(free, min(len(own), len(free)), replace=False)]
+            variants.append((f"random{q}", dl, ["every"], [sa], masks(eng, [("n", l, i) for l, i in rs])))
 
     def table(recs: list, sign: float) -> dict:
         per = {}
@@ -839,7 +872,7 @@ def natsel(a):
     def report(group: str, tab: dict):
         key = "removed" if "removed" in tab["set"] else "induced"
         rnd = [tab[f"random{q}"][key][0] for q in range(a.random)]
-        E.log(f"{group}: set {nat_brief(tab['set'])}; every head {nat_brief(tab['every_head'])}; random {key} max "
+        E.log(f"{group}: set {nat_brief(tab['set'])}; {ev.replace('_', ' ')} {nat_brief(tab[ev])}; random {key} max "
               f"{max(rnd) if rnd else float('nan'):.2f}")
     rec["test"] = {}
     for f in fams:
@@ -873,11 +906,11 @@ def natsel(a):
                     stay[nm] = stay.get(nm, 0) + int(v["flip"])
             st = {nm: round(v / max(n, 1), 4) for nm, v in stay.items()}
             rnd = [v for nm, v in st.items() if nm.startswith("random")]
-            rec["controls"][g] = {"n": n, "set": st.get("set"), "every_head": st.get("every_head"),
+            rec["controls"][g] = {"n": n, "set": st.get("set"), ev: st.get(ev),
                                   "random_mean": round(float(np.mean(rnd)), 4) if rnd else None}
             E.log(f"controls {g} ({n}): {rec['controls'][g]}")
             dump()
-    E.log(f"natsel done {time.time() - t0:.0f} s -> {out / 'heads_nat.json'}")
+    E.log(f"natsel done {time.time() - t0:.0f} s -> {out / fname}")
 
 
 def segments(tok, ids: list) -> tuple:
@@ -1445,6 +1478,7 @@ def main():
     p.add_argument("--random", type=int, default=8)
     p.add_argument("--curve-items", type=int, default=32)
     p.add_argument("--select-alpha", type=float, default=2.0)
+    p.add_argument("--kind", default="h", choices=["h", "n"], help="natsel: heads (h) or MLP neurons (n)")
     p.add_argument("--wheres", default="every,span", help="run: delta at every position and/or the span only")
     p.add_argument("--project-out", default="",
                    help="run: remove from delta its component along the format-instruction direction of these control "

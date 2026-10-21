@@ -26,19 +26,41 @@ how the model describes itself on Anthropic's persona questions.
   (permutation FDR; 18 at a familywise error rate of 5%, Westfall-Young maxT). 20 of the 51 also pass the
   acquiescence (yes-bias) test: the questions answered Yes and those answered No both move the same way.
 - **Caveats.** Steering also tilts answers toward "Yes" (on average in every trait, though not on every question).
-  Switching the 29 heads off breaks ordinary answers, so they are not honesty-only heads. Only attention heads were
-  steered here; replications with MLP neurons, the residual stream, other lie datasets and another head search are
-  running. One model.
+  Switching the 29 heads off breaks ordinary answers, so they are not honesty-only heads. One model.
+
+## Other ways of steering toward honesty
+
+![replication](replication.png)
+
+Each steer is built from the same 22 lies and 24 truthful answers and tested against 19 random directions of its own
+(same units, same per-unit sizes). Neuron and residual-stream strengths are set so that steering every unit changes the
+selection lies as much as steering every head does.
+
+- **The 29 heads carry the self-description changes.** The same direction on every head changes the same
+  self-descriptions (correlation 0.70 over the 135 traits once the confidence effect below is removed, above all 19
+  random directions). Every head except the 29 removes 0.18 of the lies and changes none of them (-0.05).
+- **MLP neurons remove lies but change different self-descriptions.** A set of 175 neurons (chosen like the heads)
+  removes 0.56 of the held-out lies (random directions at most 0.21), but its self-description changes do not match the
+  29 heads' (0.12, inside the random range). Steering every neuron does no better than random directions on lies.
+- **The residual stream at layer 24** removes 0.62 of the lies (random at most 0.21) and makes almost every
+  self-description more confident, but not the same trait-specific changes (0.08). At layers 8 and 16 it pushes all
+  answers toward uncertain, as random directions do; at layer 8 every control task breaks.
+- **Confidence.** Much of the 29 heads' change is answering more firmly the way the model already leans: 113 of 135
+  traits move that way (random directions: median 50), slope 0.13 against at most 0.10 for 39 random directions. Once
+  each direction's own confidence trend is removed, 48 traits still change (permutation FDR 5%).
+- **Attribution patching** instead of integrated gradients picks 20 heads, 19 of them among the 29 (correlation 0.93).
+- Directions from the model's own sycophantic lies, and pooled with the role-play lies, are still to run.
 
 ## Files
 
-- `code/`: `steer.py` (direction, head search, path patching, persona runs), `corefind.py` and `engine.py` (model
-  hooks), `audit_eval.py` (insider-trading replies and their grading), `persona_stats.py` (randomization tests,
-  Westfall-Young maxT and permutation FDR), `figure.py`, `make_core.py`.
+- `code/`: `steer.py` (direction, head and neuron search, path patching, persona runs), `corefind.py` and `engine.py`
+  (model hooks), `audit_eval.py` (insider-trading replies and their grading), `persona_stats.py` (randomization tests,
+  Westfall-Young maxT and permutation FDR), `persona_rep.py` and `persona_compare.py` (other steers and their
+  comparison), `figure.py`, `replication_figure.py`, `make_core.py`.
 - `data/`: role-play and insider-trading items with the model's own lie / truthful labels, persona items, control
   questions, J-lens labels of the circuit heads.
 - `results/`: every output of the original run, including the direction (`delta_A_rp.pt`) and the 29 heads
-  (`heads_nat.json`).
+  (`heads_nat.json`); `results/replication/`: the other steers' runs and `compare.json`.
 - `run.sh`: every step in order (one GPU with at least 44 GB).
 
 ## Sources
