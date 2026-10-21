@@ -1,0 +1,10 @@
+torch>=2.6
+transformers>=5.0
+flash-linear-attention
+fla-core
+einops
+numpy
+scipy
+matplotlib
+pillow
+# the figure also needs graphviz's dot on PATH
