@@ -83,3 +83,5 @@ python code/persona_rep.py run --items $I --persona data/items_persona.json --ar
   --families rp --controls $CTL --out $R/heads
 python code/persona_compare.py $OUT/persona/persona.json $R/compare.json $R/residual $R/heads $R/neurons
 python code/replication_figure.py results/replication/compare.json results/persona.json replication.png
+python code/answer_split.py data/items_roleplay_insider.json $R/answer_split.json $R/heads/lies.json $R/neurons/lies.json \
+  $R/residual/lies.json

@@ -1,6 +1,6 @@
 """One landscape figure for the role-play honesty heads of Qwen3.5-9B (inputs in results/ and data/).
 Left, top: 34 lies from held-out role-play scenarios (answer token, exact 95% intervals; "all but the 29" from the
-  bfloat16 run, the rest float32). Left, middle: insider trading, 45 conversations in which the model lies to its
+  float32 replication run, results/replication/heads/lies.json). Left, middle: insider trading, 45 conversations in which the model lies to its
   manager, full 512-token replies graded by audit_eval's rules (lie, deny_tip = a denial that names the tip or its
   source, truth, other = both, neither or no complete message).
 Left, bottom: path patching on the 34 lies (dag_nat.json). Box = a head steered alone (its share of the steering's
@@ -29,13 +29,14 @@ fs.setup()
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
 from matplotlib.patches import Patch  # noqa: E402
+from scipy.stats import beta  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 R = os.path.join(ROOT, "results")
 HERE = os.path.join(ROOT, "data")
 S = json.load(open(sys.argv[1]))
 natsel = json.load(open(f"{R}/heads_nat.json"))
-need = json.load(open(f"{R}/need_nat.json"))
+rep_heads = json.load(open(f"{R}/replication/heads/lies.json"))
 dag = json.load(open(f"{R}/dag_nat.json"))
 itr = json.load(open(f"{R}/free_core_rp29_it.json"))
 ROLE = json.load(open(os.path.join(HERE, "honesty_roles.json")))
@@ -139,9 +140,11 @@ title(0.5, y, "Test set: role-play lies (scenarios unseen in head search)")
 y += 1.6
 ax = axin(7.4, y, WL - 10.0, H1)
 rnd = [t[x]["removed"][0] for x in t if x.startswith("random")]
-nd = need["families"]["rp lie"]
+f = rep_heads["families"]["rp lie"]
+k, n = int((np.array(f["steered"])[:, rep_heads["names"].index("every head but the 29") - 1] < 0).sum()), len(f["m"])
+nd = (k / n, beta.ppf(.025, k, n - k + 1) if k else 0.0, beta.ppf(.975, k + 1, n - k) if k < n else 1.0)
 rows = [("the 29 heads", *t["set"]["removed"], STEER), ("all 896 heads", *t["every_head"]["removed"], GREY),
-        ("all but the 29", *nd["every_head_but_set"], GREY), ("29 random heads", max(rnd), min(rnd), max(rnd), "#C8C8C8")]
+        ("all but the 29", *nd, GREY), ("29 random heads", max(rnd), min(rnd), max(rnd), "#C8C8C8")]
 for i, (nm, v, lo, hi, col) in enumerate(rows[::-1]):
     ax.barh(i, max(v, 0.01), height=0.66, color=col)
     if nm.startswith("29 random"):
@@ -154,9 +157,9 @@ ax.set_yticklabels([r[0] for r in rows[::-1]])
 ax.set_ylim(-0.5, len(rows) - 0.5)
 ax.set_xlim(0, 1)
 ax.set_xticks([0, 0.25, 0.5, 0.75, 1])
-ax.set_xlabel("fraction of lies flipped to truth")
+ax.set_xlabel("fraction of lies where the truth\nbecomes more likely than the lie")
 fs.clean(ax)
-y += H1 + 2.4
+y += H1 + 3.3
 
 core = [s for s in itr["sets"] if s["set"] == "core"][0]
 rs = [s for s in itr["sets"] if s["set"] != "core"]

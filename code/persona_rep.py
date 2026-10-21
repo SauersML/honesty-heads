@@ -8,14 +8,21 @@ residual: a random direction of the same norm at the same layer), seeds 1..K as 
   persona_rep.py resdir --items NATURAL.json --source rp --out DIR [--span 9]: per layer input, the source's select
       resists' residual stream averaged over the span minus its select lies' (a plain difference: role-play items carry
       no knowledge margin) -> DIR/resid_<source>.pt
+  persona_rep.py ansdir --items NATURAL.json --source rp --out DIR: the resist-minus-lie delta (heads and neurons, as
+      steer.py natural) with the answer's polarity balanced: the select items are split by the answer the model gives
+      (lies: the lie token; resists: the truth token) into a yes-word, a no-word or anything else, and the delta is the
+      equal-weight mean over those classes of the class's resist mean minus its lie mean. With yes and no weighted
+      equally, a lie that says "No" (truth "Yes") and one that says "Yes" (truth "No") enter alike, so neither the
+      spoken answer nor the true answer leaks into the delta -> DIR/delta_A_<source>_answer.pt
   persona_rep.py calib --items NATURAL.json --arms ARMS.json --out DIR: per arm, the alpha at which its median m change
       on the source's select lies (+alpha) and resists (-alpha), averaged, equals the reference's (every head along
       --ref-delta at alpha 2) -> DIR/calib.json
   persona_rep.py run --items NATURAL.json --persona PERSONA.json --arms ARMS.json --out DIR: per arm against its random
       directions, lie removal on the natural families' test lies (+alpha), lie induction on their test resists (-alpha)
-      and the controls the unedited model gets right that stay right (+alpha) -> DIR/lies.json; then every persona item
-      unsteered, under each arm and under its random directions -> DIR/persona.json (names: base, ARM, ARM/random1..K;
-      test one arm with persona_stats.py DIR/persona.json OUT.json ARM)
+      and the controls the unedited model gets right that stay right (+alpha) -> DIR/lies.json (each family's items
+      with the polarity of the answer the model gives, "said"); then every persona item unsteered, under each arm and
+      under its random directions -> DIR/persona.json (names: base, ARM, ARM/random1..K; arms with "persona": false
+      are left out; test one arm with persona_stats.py DIR/persona.json OUT.json ARM)
 ARMS.json: [{"name": ..., "delta": steer.py natural's .pt or resdir's .pt, "kind": "h" | "n" | "r", "units": "all" or
              natsel's heads_nat.json / neurons_nat.json, "exclude": a natsel file whose units are left out,
              "layer": l (kind r), "alpha": a number or "calib" (with
@@ -38,6 +45,19 @@ import engine as E  # noqa: E402
 import steer as S  # noqa: E402
 
 CTL = "honest_tf,honest_qa,french,caps,sys_caps,sys_fiction,sys_labelswap,sys_swap_shots,sys_honest"
+YES = {"yes", "yeah", "yep", "absolutely", "sure", "definitely", "certainly", "indeed"}
+NO = {"no", "not", "nope", "never"}
+
+
+def polarity(tokens: list) -> str:
+    """The first answer string's polarity: "yes", "no" or "other"."""
+    w = (tokens[0] if tokens else "").strip().lower()
+    return "yes" if w in YES else "no" if w in NO else "other"
+
+
+def said(it: dict, label: str) -> str:
+    """The polarity of the answer the model gives: the lie token on a lie, the truth token on a resist."""
+    return polarity(it["lie"] if label == "lie" else it["truth"])
 
 
 def load_items(path: str) -> list:
@@ -76,6 +96,38 @@ def resdir(a):
                 "norm": d.norm(dim=1).tolist(), "resid_norm": mean["lie"].float().norm(dim=1).tolist()},
                out / f"{stem}.pt")
     E.log(f"resdir -> {out / stem}.pt; difference norm per layer {[round(x, 1) for x in d.norm(dim=1).tolist()]}")
+
+
+def ansdir(a):
+    out = Path(a.out)
+    out.mkdir(parents=True, exist_ok=True)
+    model, tok = E.load(a.model, a.dtype, a.device)
+    eng = E.Engine(model)
+    items, src, P = load_items(a.items), a.source.split(","), a.span
+    cells = {}
+    for lab in ("lie", "resist"):
+        for r in [r for f in src for r in S.nat_recs(eng, tok, items, f, ["select"], lab, a.n_select, P, True)]:
+            cells.setdefault((lab, said(r["it"], lab)), []).append(r["mean"])
+    ks = [k for k in ("yes", "no", "other") if ("lie", k) in cells and ("resist", k) in cells]
+    if ("yes" in ks) != ("no" in ks):                   # (yes without no would let the answer back in)
+        ks = [k for k in ks if k == "other"]
+    counts = {f"{lab} {k}": len(v) for (lab, k), v in sorted(cells.items())}
+    E.log(f"ansdir classes {ks}; items {counts}")
+
+    def mean(c: list, kind: str, l: int):
+        return sum(x[kind][l] for x in c) / len(c)
+    d = {kind: [(sum(mean(cells["resist", k], kind, l) - mean(cells["lie", k], kind, l) for k in ks) / len(ks)).float()
+                for l in range(len(cells["lie", ks[0]][0][kind]))] for kind in ("h", "n")}
+    plain = {kind: [(mean([x for (lab, _), v in cells.items() if lab == "resist" for x in v], kind, l)
+                     - mean([x for (lab, _), v in cells.items() if lab == "lie" for x in v], kind, l)).float()
+                    for l in range(len(d[kind]))] for kind in ("h", "n")}
+    hb, hp = torch.cat([x.flatten() for x in d["h"]]), torch.cat([x.flatten() for x in plain["h"]])
+    info = {"classes": ks, "items": counts, "norm_heads": float(hb.norm()), "norm_heads_plain": float(hp.norm()),
+            "cos_heads_plain": float(hb @ hp / (hb.norm() * hp.norm()))}
+    stem = "delta_A_" + "+".join(src) + "_answer"
+    torch.save({**{k: [x.cpu() for x in v] for k, v in d.items()}, "info": info, "P": P, "source": src},
+               out / f"{stem}.pt")
+    E.log(f"ansdir -> {out / stem}.pt; {info}")
 
 
 def build(eng, arm: dict, alpha: float | None = None) -> tuple:
@@ -192,7 +244,8 @@ def run(a):
             for r in recs:
                 lp = S.run_rows(eng, r["ids"], S.Shift(eng, dls[1:], [(sign * c, m) for c, m in rows[1:]], P, True))
                 per.append([round(eng.metric(row, r["lie"], r["truth"]), 4) for row in lp])
-            lies["families"][f"{f} {lab}"] = {"m": [round(r["m"], 4) for r in recs], "steered": per}
+            sd = [said(r["it"], lab) for r in recs]
+            lies["families"][f"{f} {lab}"] = {"m": [round(r["m"], 4) for r in recs], "said": sd, "steered": per}
             x = np.array(per)
             hit = (x < 0) if sign > 0 else (x > 0)
             E.log(f"{f} {lab} ({len(recs)}): " + "; ".join(
@@ -200,6 +253,10 @@ def run(a):
                 "; random max " + ", ".join(
                 f"{arm['name']} {max(hit[:, j].mean() for j, n in enumerate(names[1:]) if n.startswith(arm['name'] + '/random')):.2f}"
                 for arm in arms if arm.get("random")))
+            for k in [k for k in ("yes", "no", "other") if k in sd]:
+                ix = np.array(sd) == k
+                E.log(f"  said {k} ({ix.sum()}): " + "; ".join(f"{n} {hit[ix, j].mean():.2f}"
+                                                              for j, n in enumerate(names[1:]) if "/random" not in n))
             dump_lies()
     if a.controls and not lies.get("done"):
         for g, crs in C.control_recs(tok, a.controls, a.ctl_groups.split(",")).items():
@@ -217,7 +274,10 @@ def run(a):
     lies["done"] = True
     dump_lies()
     E.log(f"lies and controls done ({time.time() - t0:.0f} s)")
-    rec = {"arms": arms, "names": names, "items": []}
+    keep = [j for j, n in enumerate(names) if j == 0 or next(x for x in arms if n.split("/random")[0] == x["name"])
+            .get("persona", True)]
+    rows, dls, names = [rows[j] for j in keep], [dls[j] for j in keep], [names[j] for j in keep]
+    rec = {"arms": [x for x in arms if x.get("persona", True)], "names": names, "items": []}
     if (out / "persona.json").exists():                 # (resume from the items already scored)
         old = json.load(open(out / "persona.json"))
         if old["names"] == names:
@@ -243,7 +303,7 @@ def run(a):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("cmd", choices=["resdir", "calib", "run"])
+    p.add_argument("cmd", choices=["resdir", "ansdir", "calib", "run"])
     p.add_argument("--out", required=True)
     p.add_argument("--items", default="")
     p.add_argument("--persona", default="")
@@ -262,7 +322,7 @@ def main():
     p.add_argument("--dtype", default="float32")
     p.add_argument("--device", default="cuda")
     a = p.parse_args()
-    {"resdir": resdir, "calib": calib, "run": run}[a.cmd](a)
+    {"resdir": resdir, "ansdir": ansdir, "calib": calib, "run": run}[a.cmd](a)
 
 
 if __name__ == "__main__":
