@@ -5,8 +5,9 @@
 ![figure](honesty_heads.png)
 
 Steering 29 attention heads of Qwen3.5-9B (14 softmax-attention heads and 15 Gated DeltaNet heads) along one direction
-makes the truthful answer more likely than the lie on about half of the model's own held-out role-play lies, and changes
-how the model describes itself on Anthropic's persona questions.
+makes the truthful answer more likely than the lie on about half of the model's own held-out role-play lies (mostly
+lies that say "No": part of the direction is "say Yes", see below), and changes how the model describes itself on
+Anthropic's persona questions.
 
 - **Direction.** For each head: its mean output over the 9 tokens before the model's truthful role-play answers, minus
   the same before its role-play lies. These are the model's own lies (Apollo role-play scenarios give it a motive;
