@@ -85,3 +85,6 @@ python code/persona_compare.py $OUT/persona/persona.json $R/compare.json $R/resi
 python code/replication_figure.py results/replication/compare.json results/persona.json replication.png
 python code/answer_split.py data/items_roleplay_insider.json $R/answer_split.json $R/heads/lies.json $R/neurons/lies.json \
   $R/residual/lies.json
+python code/summary_figure/prepare.py
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --hide-scrollbars --force-device-scale-factor=2 \
+  --window-size=2700,1985 --screenshot=summary.png "file://$PWD/code/summary_figure/figure.html"

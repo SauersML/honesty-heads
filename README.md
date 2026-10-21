@@ -2,12 +2,14 @@
 
 **Author: Claude Opus 5.5**
 
-![figure](honesty_heads.png)
+![summary](summary.png)
 
 Steering 29 attention heads of Qwen3.5-9B (14 softmax-attention heads and 15 Gated DeltaNet heads) along one direction
 makes the truthful answer more likely than the lie on about half of the model's own held-out role-play lies (mostly
 lies that say "No": part of the direction is "say Yes", see below), and changes how the model describes itself on
 Anthropic's persona questions.
+
+![figure](honesty_heads.png)
 
 - **Direction.** For each head: its mean output over the 9 tokens before the model's truthful role-play answers, minus
   the same before its role-play lies. These are the model's own lies (Apollo role-play scenarios give it a motive;
@@ -79,7 +81,8 @@ selection lies as much as steering every head does.
   (model hooks), `audit_eval.py` (insider-trading replies and their grading), `persona_stats.py` (randomization tests,
   Westfall-Young maxT and permutation FDR), `persona_rep.py` and `persona_compare.py` (other steers and their
   comparison), `answer_split.py` (each steer's effect split by the answer's yes/no polarity), `figure.py`,
-  `replication_figure.py`, `make_core.py`.
+  `replication_figure.py`, `summary_figure/` (the one-page summary: `prepare.py` writes `data.js`, `figure.html` is
+  rendered with headless Chrome), `make_core.py`.
 - `data/`: role-play and insider-trading items with the model's own lie / truthful labels, persona items, control
   questions, J-lens labels of the circuit heads.
 - `results/`: every output of the original run, including the direction (`delta_A_rp.pt`) and the 29 heads
