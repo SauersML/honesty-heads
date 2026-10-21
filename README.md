@@ -35,8 +35,11 @@ Anthropic's persona questions.
   whose answer is neither yes nor no, the truth gains 2.95 bits (random at most 0.96). So there is an honesty part, but
   the lie-removal counts above overstate it. The insider-trading admissions ("yes, I knew") cannot tell the two apart.
   The persona changes are measured on questions answered Yes and No in equal numbers, which cancels a uniform push
-  toward "Yes"; the acquiescence test above checks the rest. A direction rebuilt with yes- and no-answer lies
-  weighted equally is running.
+  toward "Yes"; the acquiescence test above checks the rest. Rebuilt with yes-answer and no-answer examples weighted
+  equally (`persona_rep.py ansdir`; cosine 0.61 with the original direction over all heads), the head search picks 50
+  heads, 20 of them among the 29, and steering them removes 17 of the 34 held-out lies (random directions at most 2 of
+  34; `results/replication/balanced/`). Whether that holds separately for lies that say "Yes" and lies that say "No"
+  was not measured: the run was stopped before that step.
 - **Caveats.** Switching the 29 heads off breaks ordinary answers, so they are not honesty-only heads. One model.
 
 ## Other ways of steering toward honesty
@@ -64,7 +67,11 @@ selection lies as much as steering every head does.
   truth for both answers / toward "Yes". Attribution-patching heads 1.65 (random at most 0.25) / 1.13; 175 neurons
   1.94 (at most 0.27) / 2.28; every neuron 0.35 (not above random) / 4.35, so steering every neuron is almost purely
   "say Yes"; residual stream at layer 16 3.21 / 3.52 and at layer 24 2.69 / 3.72. The head steers lean least on "Yes".
-- Directions from the model's own sycophantic lies, and pooled with the role-play lies, are running.
+- **Other kinds of lie.** A direction from the model's own sycophantic lies (`results/replication/sycophancy/`) picks
+  103 heads, only 9 of them among the 29; it removes 0.57 of held-out sycophantic lies (random directions at most 0.05)
+  but only 0.35 of role-play lies (random at most 0.25). Different kinds of lie mostly use different heads. Pooling
+  sycophantic and role-play lies gives a weak direction on every head (0.38 of role-play lies, random at most 0.32 of
+  4) that makes MASK lies more likely. The persona tests of these directions were not run.
 
 ## Files
 
