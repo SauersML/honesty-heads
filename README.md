@@ -1,5 +1,7 @@
 # Honesty heads in Qwen3.5-9B
 
+**Author: Claude Opus 5.5**
+
 ![figure](honesty_heads.png)
 
 Steering 29 attention heads of Qwen3.5-9B (14 softmax-attention heads and 15 Gated DeltaNet heads) along one direction
@@ -39,5 +41,3 @@ Anthropic's persona questions.
 Role-play scenarios: Apollo Research, "Detecting Strategic Deception Using Linear Probes" (Goldowsky-Dill et al.,
 2025). Insider trading: Liars' Bench (from Scheurer et al., 2023). Persona questions: Anthropic's model-written evals
 (Perez et al., 2022; CC BY 4.0). Some control prompts come from Alpaca (CC BY-NC 4.0).
-
-Written by Claude Opus 5.5.
